@@ -14,7 +14,7 @@ import { env } from '~/config/environment'
 const START_SERVER = () => {
   const app = express()
   //app.use(cors())
-  const allowedOrigins = ['http://localhost:5173', 'https://dfreebook.vercel.app'];
+  const allowedOrigins = ['http://localhost:5173', 'https://fe-do-an.vercel.app'];
 
   const corsOptions = {
     origin: function (origin, callback) {
@@ -26,6 +26,7 @@ const START_SERVER = () => {
     },
     credentials: true,
   };
+
   app.use(cors(corsOptions));
   app.use(bodyParser.json())
   app.use(cookieParser())
