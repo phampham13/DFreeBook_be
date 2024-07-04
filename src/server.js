@@ -14,7 +14,19 @@ import { env } from '~/config/environment'
 const START_SERVER = () => {
   const app = express()
   //app.use(cors())
-  app.use(cors({ credentials: true, origin: 'http://localhost:5173' })); //origin:true
+  const allowedOrigins = ['http://localhost:5173', 'https://fe-do-an.vercel.app'];
+
+  const corsOptions = {
+    origin: function (origin, callback) {
+      if (allowedOrigins.includes(origin) || !origin) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+  };
+  app.use(cors(corsOptions));
   app.use(bodyParser.json())
   app.use(cookieParser())
   app.use(express.json())
