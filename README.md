@@ -20,9 +20,3 @@
 * "@babel/preset-env": "^7.22.10"
 * "babel-plugin-module-resolver": "^5.0.0"
 ```
-
-"Learning new everyday not the copycat of yesterday!"
-
-"A bit of fragrance clings to the hand that gives flowers!"
-
-Thanks for watching!
