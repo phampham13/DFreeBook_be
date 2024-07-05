@@ -42,19 +42,17 @@ const START_SERVER = () => {
 
   require('./utils/scheduler');
 
+  //support Render.com
   if (process.env.BUILD_MODE === "dev") {
     app.listen(env.APP_PORT, env.APP_HOST, () => {
       console.log(`Hello ${env.AUTHOR}, I am running at ${env.APP_HOST}:${env.APP_PORT}/`)
     })
   } else {
     app.listen(process.env.PORT, () => {
-      console.log(`Hello ${env.AUTHOR}, I am running at ${process.env.PORT}`)
+      console.log(`production: Hello ${env.AUTHOR}, I am running at ${process.env.PORT}`)
     })
 
   }
-
-
-
 }
 
 CONNECT_DB()
