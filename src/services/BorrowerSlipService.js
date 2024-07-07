@@ -345,7 +345,7 @@ const updateState = (id, newState, lateFee) => {
                 const promises = listBook.map(async (book) => {
                     const bookData = await Book.findOneAndUpdate(
                         {
-                            bookId: book.bookId,
+                            _id: book.bookId,
                         },
                         {
                             $inc: {
