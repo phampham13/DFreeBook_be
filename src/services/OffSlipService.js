@@ -1,7 +1,8 @@
 const OffBorrowerSlip = require("../models/OffBorrowerSlipModel");
 const Book = require("../models/BookModel");
-const UserService = require("../services/UserService");
+const User = require("../models/UserModel");
 const BlockedPhone = require("../models/BlockedPhoneModel");
+const OnBorrowerSlip = require("../models/BorrowerSlipModel");
 
 const createBorrowerSlip = (newBorrowerSlip) => {
   return new Promise(async (resolve, reject) => {
@@ -238,13 +239,24 @@ const updateState = (id, newState) => {
       } else if (newState === 2) {
         if (currentState === 3) {
           const p = await BlockedPhone.findOne({ phoneNumber: bSlip.phoneNumber })
-          if (p) {
-            await BlockedPhone.findOneAndDelete({
-              phoneNumber: bSlip.phoneNumber
-            },
-              {
-                new: true
-              })
+          const user = await User.findOne({ phoneNumber: bSlip.phoneNumber })
+          if (user) {
+            const onBrSlip = await OnBorrowerSlip.find({
+              userId: user._id,
+              $or: [
+                { state: 3 },
+                { lateFee: { $gt: 0 } }
+              ]
+            });
+
+            if (p && (onBrSlip.length === 0)) {
+              await BlockedPhone.findOneAndDelete({
+                phoneNumber: bSlip.phoneNumber
+              },
+                {
+                  new: true
+                })
+            }
           }
         }
         const promises = listBook.map(async (book) => {
