@@ -226,7 +226,7 @@ const updateUser = (userId, data) => {
             }
 
             const checkBlockPhone = await BlockPhone.findOne({ phoneNumber: checkUser.phoneNumber })
-            if (checkBlockPhone) {
+            if (!checkBlockPhone) {
                 await BlockPhone.create({ phoneNumber: data.phoneNumber })
             }
 
