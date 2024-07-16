@@ -3,6 +3,7 @@ const Book = require("../models/BookModel")
 const UserService = require("../services/UserService")
 const BlockedPhone = require("../models/BlockedPhoneModel")
 const EmailService = require("../services/EmailService")
+const ViolationCheck = require("../services/ViolationCheck")
 const OffBrSlip = require("../models/OffBorrowerSlipModel")
 const User = require("../models/UserModel")
 
@@ -14,7 +15,7 @@ const createBorrowerSlip = (newBorrowerSlip) => {
             if (checkBlockedUser) {
                 return resolve({
                     status: "ERR",
-                    message: "Tài khoản của bạn đã bị khóa do có phiếu chưa trả",
+                    message: "Tài khoản của bạn đã bị chặn",
                     data: userId
                 })
             }
@@ -240,17 +241,59 @@ const cancelBorrow = (id) => { //id của slip khác bookId
 const getAllBorrowerSlip = () => {
     return new Promise(async (resolve, reject) => {
         try {
-            const allBSlip = await BorrowerSlip.find().sort({ createdAt: -1, updatedAt: -1 })
-            return resolve({
+            const allBSlip = await BorrowerSlip.find().sort({ createdAt: -1, updatedAt: -1 });
+
+            const statusStats = await BorrowerSlip.aggregate([
+                {
+                    $group: {
+                        _id: "$state",
+                        count: { $sum: 1 }
+                    }
+                }
+            ]);
+
+            const stat = [
+                { name: 'chờ xác nhận', value: 0 },
+                { name: 'đang mượn', value: 0 },
+                { name: 'đã trả', value: 0 },
+                { name: 'quá hạn', value: 0 }
+            ];
+
+            statusStats.forEach(statItem => {
+                switch (statItem._id) {
+                    case 0:
+                        stat[0].value = statItem.count;
+                        break;
+                    case 1:
+                        stat[1].value = statItem.count;
+                        break;
+                    case 2:
+                        stat[2].value = statItem.count;
+                        break;
+                    case 3:
+                        stat[3].value = statItem.count;
+                        break;
+                    default:
+                        break;
+                }
+            });
+
+            const sortedBSlip = allBSlip.sort((a, b) => {
+                const statusOrder = { 0: 0, 3: 1, 1: 2, 2: 3 }; // Định nghĩa thứ tự status
+                return statusOrder[a.state] - statusOrder[b.state];
+            });
+
+            resolve({
                 status: 'OK',
                 message: 'Success',
-                data: allBSlip
-            })
+                data: sortedBSlip,
+                stat: stat
+            });
         } catch (e) {
-            reject(e)
+            reject(e);
         }
-    })
-}
+    });
+};
 
 const deleteMany = (ids) => {
     return new Promise(async (resolve, reject) => {
@@ -290,7 +333,7 @@ const deleteBorrowerSlip = (id) => {
     })
 }
 
-const updateState = (id, newState, lateFee) => {
+const updateState = (id, newState, lateFee, paidLateFee) => {
     return new Promise(async (resolve, reject) => {
         try {
             const bSlip = await BorrowerSlip.findById(id)
@@ -307,7 +350,7 @@ const updateState = (id, newState, lateFee) => {
             const validTransitions = {
                 0: [1, 2],      // PENDING (0) -> BORROWING (1) hoặc RETURN(2)
                 1: [2, 3],   // BORROWING (1) -> RETURNED (2) hoặc OVERDUE (3)
-                2: [],      //BORROWING(2)
+                2: [2],      //BORROWING(2)
                 3: [2]       // OVERDUE (3) -> RETURNED (2)
             };
 
@@ -328,10 +371,9 @@ const updateState = (id, newState, lateFee) => {
                     await BlockedPhone.create({ phoneNumber: user.phoneNumber })
                 }
             } else if (newState === 2) {
-                if (currentState === 3) {
-                    //từ 3-> 2 không đổi userState vì chưa biết user thanh toán phí phạt chưa
-                    const p = await BlockedPhone.findOne({ phoneNumber: bSlip.phoneNumber })
-                    if (p) {
+                const check = await ViolationCheck.check(bSlip.phoneNumber)
+                if (currentState === 2) {
+                    if (check.lateOffBrSlip === 0 && check.lateBrSlip === 0 && paidLateFee === true) {
                         await BlockedPhone.findOneAndDelete({
                             phoneNumber: bSlip.phoneNumber
                         },
@@ -340,6 +382,27 @@ const updateState = (id, newState, lateFee) => {
                             })
                     }
                     bSlip.lateFee = lateFee
+                    bSlip.paidLateFee = paidLateFee
+                    await bSlip.save()
+                    return resolve({
+                        status: "OK",
+                        message: "update complete",
+                        data: bSlip,
+                    })
+                }
+                if (currentState === 3) {
+                    //từ 3-> 2 không đổi userState vì chưa biết user thanh toán phí phạt chưa
+                    if (check.lateOffBrSlip === 0 && check.lateBrSlip === 1 && paidLateFee === true) {
+                        await BlockedPhone.findOneAndDelete({
+                            phoneNumber: bSlip.phoneNumber
+                        },
+                            {
+                                new: true
+                            })
+                    }
+
+                    bSlip.lateFee = lateFee
+                    bSlip.paidLateFee = paidLateFee
                     await bSlip.save()
                 }
                 const promises = listBook.map(async (book) => {
@@ -397,10 +460,13 @@ const callSlipStatistic = (year) => {
         try {
             // Tạo mảng để lưu tổng số phiếu theo tháng
             const monthlySlipStats = [];
+            const monthlyPenalty = [];
 
-            // Tạo biến tổng số phiếu và tổng số sách được mượn
+            // Tạo biến tổng số phiếu, tổng số sách được mượn, tổng phí phạt trong năm và tổng phí phạt đã đóng trong năm
             let totalBorrowerSlip = 0;
             let totalBorrowedBook = 0;
+            let totalLateFee = 0;
+            let totalPaidLateFee = 0;
 
             for (let month = 1; month <= 12; month++) {
                 // Xử lý điều kiện date trước khi thống kê từng tháng
@@ -433,11 +499,29 @@ const callSlipStatistic = (year) => {
                     }
                 ]);
 
+                const penaltyStats = await BorrowerSlip.aggregate([
+                    {
+                        $match: {
+                            updatedAt: { $gte: dateCondition[0], $lte: dateCondition[1] },
+                            state: 2,
+                            lateFee: { $exists: true, $gt: 0 },
+                            paidLateFee: { $exists: true }
+                        }
+                    },
+                    {
+                        $group: {
+                            _id: '$paidLateFee',
+                            totalLateFee: { $sum: '$lateFee' }
+                        }
+                    }
+                ]);
+
                 const monthNames = ["January", "February", "March", "April", "May", "June",
                     "July", "August", "September", "October", "November", "December"];
                 const monthName = monthNames[month - 1];
 
                 let pending = 0, borrowing = 0, returned = 0, overdue = 0, monthlyBooks = 0;
+                let paidLateFee = 0, unpaidLateFee = 0;
 
                 monthlyStats.forEach(stat => {
                     if (stat._id === 0) pending = stat.count;
@@ -445,6 +529,16 @@ const callSlipStatistic = (year) => {
                     if (stat._id === 2) returned = stat.count;
                     if (stat._id === 3) overdue = stat.count;
                     monthlyBooks += stat.totalBooks;
+                });
+
+                penaltyStats.forEach(stat => {
+                    if (stat._id) {
+                        paidLateFee = stat.totalLateFee;
+                        totalPaidLateFee += stat.totalLateFee;
+                    } else {
+                        unpaidLateFee = stat.totalLateFee;
+                    }
+                    totalLateFee += stat.totalLateFee;
                 });
 
                 totalBorrowerSlip += (pending + borrowing + returned + overdue);
@@ -457,15 +551,26 @@ const callSlipStatistic = (year) => {
                     returned: returned,
                     overdue: overdue
                 });
+
+                monthlyPenalty.push({
+                    month: monthName,
+                    paidLateFee: paidLateFee,
+                    unpaidLateFee: unpaidLateFee
+                });
             }
 
             resolve({
                 status: "OK",
                 message: "complete statistic",
-                data: {
+                data1: {
                     totalBorrowerSlip: totalBorrowerSlip,
                     totalBorrowedBook: totalBorrowedBook,
                     monthlySlipStats: monthlySlipStats
+                },
+                data2: {
+                    totalLateFee: totalLateFee,
+                    totalPaidLateFee: totalPaidLateFee,
+                    monthlyPenalty: monthlyPenalty
                 }
             });
 
@@ -481,18 +586,16 @@ const payFeeSuccess = async (slipId) => {
         const user = await User.findOne({ _id: bslip.userId })
         user.state = 0
         await user.save()
-        const lateOffSlip = await OffBrSlip.find({
-            phoneNumber: user.phoneNumber,
-            state: 3
-        })
+        const check = await ViolationCheck.check(user.phoneNumber)
 
-        if (lateOffSlip.length === 0) {
+        if (check.lateOffBrSlip === 0) {
             await BlockedPhone.findOneAndDelete({ phoneNumber: user.phoneNumber })
         }
-        // Tìm và cập nhật các phiếu mượn có state là 2 và lateFee > 0
+        // Tìm và cập nhật các phiếu mượn có state là 2 và chưa trả phí
+        console.log("THANH TOÁN PHÍ PHẠT", check)
         await BorrowerSlip.updateMany(
-            { userId: user._id, state: 2, returnDate: { $exists: true }, lateFee: { $gt: 0 } },
-            { $set: { lateFee: 0 } }
+            { userId: user._id, state: 2, returnDate: { $exists: true }, lateFee: { $gt: 0 }, paidLateFee: false },
+            { $set: { paidLateFee: true } }
         );
 
         // Tìm các phiếu mượn có state là 3
@@ -504,6 +607,8 @@ const payFeeSuccess = async (slipId) => {
             try {
                 slip.state = 2;
                 slip.returnDate = today;
+                slip.lateFee = slip.totalAmount * 50000
+                slip.paidLateFee = true
 
                 for (const book of slip.books) {
                     try {

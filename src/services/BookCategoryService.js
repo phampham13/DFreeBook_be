@@ -1,4 +1,5 @@
 const BookCategory = require("../models/BookCategoryModel")
+const Book = require("../models/BookModel")
 //const bcrypt = require("bcrypt")
 //const { genneralAccessToken, genneralRefreshToken } = require("./JwtService")
 
@@ -40,44 +41,66 @@ const createCategory = (categoryName) => {
 }
 
 
-const deleteBookCategory = (categoryId) => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const checkCategory = await BookCategory.findOne({
-                _id: categoryId
-            })
-            if (checkCategory === null) {
-                resolve({
-                    status: 'ERR',
-                    message: 'The book category is not define'
-                })
+const deleteBookCategory = async (categoryId) => {
+    try {
+        const checkCategory = await BookCategory.findOne({ _id: categoryId });
+        if (!checkCategory) {
+            return {
+                status: 'ERR',
+                message: 'The book category is not defined',
+            };
+        }
+
+        await Book.deleteMany({ categoryName: checkCategory.categoryName });
+
+        await BookCategory.findByIdAndDelete(categoryId);
+        return {
+            status: 'OK',
+            message: 'Delete category and associated books success',
+        };
+    } catch (e) {
+        return {
+            status: 'ERR',
+            message: e.message,
+        };
+    }
+};
+
+const getAllBookCategory = async () => {
+    try {
+        // Lấy tất cả các category và tính toán số đầu sách, tổng số sách và số sách có sẵn
+        const allBookCategory = await BookCategory.aggregate([
+            {
+                $lookup: {
+                    from: 'books', // Tên collection của Book
+                    localField: 'categoryName',
+                    foreignField: 'categoryName',
+                    as: 'books'
+                }
+            },
+            {
+                $project: {
+                    categoryName: 1,
+                    bookCount: { $size: '$books' },
+                    totalBooks: { $sum: '$books.quantityTotal' },
+                    availableBooks: { $sum: '$books.quantityAvailable' }
+                }
             }
+        ]);
 
-            await BookCategory.findByIdAndDelete(categoryId, { new: true })
-            resolve({
-                status: 'OK',
-                message: 'Delete category success',
-            })
-        } catch (e) {
-            reject(e)
-        }
-    })
-}
+        return {
+            status: 'OK',
+            message: 'Success',
+            data: allBookCategory
+        };
+    } catch (e) {
+        return {
+            status: 'ERR',
+            message: e.message
+        };
+    }
+};
 
-const getAllBookCategory = () => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            const allBookCategory = await BookCategory.find()
-            resolve({
-                status: 'OK',
-                message: 'Success',
-                data: allBookCategory
-            })
-        } catch (e) {
-            reject(e)
-        }
-    })
-}
 
 const checkCategory = (categoryName) => {
 
@@ -87,48 +110,37 @@ const checkCategory = (categoryName) => {
     return category
 }
 
-/*const getAllProduct = async (limit, page, sort, filter) => {
+const updateCategory = async (categoryId, newCategory) => {
     try {
-        let query = Product.find();
-        if (filter && filter.length === 2) {
-            const [label, value] = filter;
-            query = query.where(label).regex(new RegExp(value, 'i'));
-            console.log(query)
+        const checkCategory = await BookCategory.findById(categoryId);
+        if (!checkCategory) {
+            return {
+                status: 'ERR',
+                message: 'The book category is not defined',
+            };
         }
+        await Book.updateMany({ categoryName: checkCategory.categoryName }, { categoryName: newCategory });
 
-        if (sort && sort.length === 2) {
-            const [order, field] = sort;
-            const sortOption = {};
-            sortOption[field] = order;
-            query = query.sort(sortOption);
-        } else {
-            query = query.sort({ createdAt: -1, updatedAt: -1 });
-        }
-
-        if (limit) {
-            query = query.limit(limit).skip(page * limit);
-        }
-
-        const totalProduct = await Product.countDocuments();
-        const allProduct = await query.exec();
+        // Cập nhật tên category trong bảng BookCategory
+        await BookCategory.findByIdAndUpdate(categoryId, { categoryName: newCategory }, { new: true });
 
         return {
             status: 'OK',
-            message: 'Success',
-            data: allProduct,
-            total: totalProduct,
-            pageCurrent: Number(page + 1),
-            totalPage: Math.ceil(totalProduct / limit)
+            message: 'Update category and books success',
         };
-    } catch (error) {
-        throw error;
+    } catch (e) {
+        return {
+            status: 'ERR',
+            message: e.message,
+        };
     }
-};*/
+};
 
 module.exports = {
     createBookCategory,
     createCategory,
     deleteBookCategory,
     getAllBookCategory,
-    checkCategory
+    checkCategory,
+    updateCategory
 }

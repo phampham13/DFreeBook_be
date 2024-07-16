@@ -1,5 +1,4 @@
 const BookCategoryService = require('~/services/BookCategoryService')
-const JwtService = require('~/services/JwtService')
 
 const createBookCategory = async (req, res) => {
     try {
@@ -27,7 +26,7 @@ const deleteBookCategory = async (req, res) => {
         if (!categoryId) {
             resolve({
                 status: 'ERR',
-                message: 'The userId is required'
+                message: 'The categoryId is required'
             })
         }
         const response = await BookCategoryService.deleteBookCategory(categoryId)
@@ -50,8 +49,28 @@ const getAllBookCategory = async (req, res) => {
     }
 }
 
+const updateCategory = async (req, res) => {
+    try {
+        const categoryId = req.params.id
+        const { newCategory } = req.body
+        if (!categoryId) {
+            resolve({
+                status: 'ERR',
+                message: 'The Id is required'
+            })
+        }
+        const response = await BookCategoryService.updateCategory(categoryId, newCategory)
+        return res.status(200).json(response)
+    } catch (e) {
+        return res.status(404).json({
+            message: e.message
+        })
+    }
+}
+
 module.exports = {
     createBookCategory,
     deleteBookCategory,
-    getAllBookCategory
+    getAllBookCategory,
+    updateCategory
 }

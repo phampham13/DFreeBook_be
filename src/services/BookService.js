@@ -108,6 +108,14 @@ const getAllBook = (limit, page, sort, filter) => {
   return new Promise(async (resolve, reject) => {
     try {
       const totalBook = await Book.countDocuments();
+      const [booksTotalQuantityResult, booksAvailableResult] = await Promise.all([
+        Book.aggregate([{ $group: { _id: null, total: { $sum: "$quantityTotal" } } }]),
+        Book.aggregate([{ $group: { _id: null, total: { $sum: "$quantityAvailable" } } }]),
+      ]);
+
+      const booksTotalQuantity = booksTotalQuantityResult[0] ? booksTotalQuantityResult[0].total : 0;
+      const booksAvailable = booksAvailableResult[0] ? booksAvailableResult[0].total : 0;
+
       let allBook = [];
       if (filter) {
         const label = filter[0];
@@ -123,6 +131,8 @@ const getAllBook = (limit, page, sort, filter) => {
           total: totalBook,
           pageCurrent: Number(page + 1),
           totalPage: Math.ceil(totalBook / limit),
+          booksTotalQuantity: booksTotalQuantity,
+          booksAvailable: booksAvailable,
         });
       }
       if (sort) {
@@ -140,6 +150,8 @@ const getAllBook = (limit, page, sort, filter) => {
           total: totalBook,
           pageCurrent: Number(page + 1),
           totalPage: Math.ceil(totalBook / limit),
+          booksTotalQuantity: booksTotalQuantity,
+          booksAvailable: booksAvailable,
         });
       }
       if (!limit) {
@@ -157,6 +169,8 @@ const getAllBook = (limit, page, sort, filter) => {
         total: totalBook,
         pageCurrent: Number(page + 1),
         totalPage: Math.ceil(totalBook / limit),
+        booksTotalQuantity: booksTotalQuantity,
+        booksAvailable: booksAvailable,
       });
     } catch (e) {
       reject(e);

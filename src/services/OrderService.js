@@ -206,17 +206,40 @@ const cancelOrder = (id) => {
 const getAllOrder = () => {
     return new Promise(async (resolve, reject) => {
         try {
-            const allOrder = await Order.find().sort({ createdAt: -1, updatedAt: -1 })
+            const allOrder = await Order.find().sort({ status: 1, createdAt: -1, updatedAt: -1 });
+
+            const statusStats = await Order.aggregate([
+                { $group: { _id: "$status", count: { $sum: 1 } } }
+            ]);
+
+            const paymentStats = await Order.aggregate([
+                {
+                    $group: {
+                        _id: { isPaid: "$isPaid" },
+                        count: { $sum: 1 }
+                    }
+                }
+            ]);
+
+            const stat = {
+                status: statusStats.map(stat => ({ name: stat._id, value: stat.count })),
+                paymentMethod: paymentStats.map(stat => ({
+                    name: stat._id.isPaid ? 'Momo' : 'Thanh toán khi nhận',
+                    value: stat.count
+                }))
+            };
+
             resolve({
                 status: 'OK',
                 message: 'Success',
-                data: allOrder
-            })
+                data: allOrder,
+                stat: stat
+            });
         } catch (e) {
-            reject(e)
+            reject(e);
         }
-    })
-}
+    });
+};
 
 const deleteManyOrder = (ids) => {
     return new Promise(async (resolve, reject) => {

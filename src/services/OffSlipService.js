@@ -3,6 +3,7 @@ const Book = require("../models/BookModel");
 const User = require("../models/UserModel");
 const BlockedPhone = require("../models/BlockedPhoneModel");
 const OnBorrowerSlip = require("../models/BorrowerSlipModel");
+const ViolationCheck = require("../services/ViolationCheck")
 
 const createBorrowerSlip = (newBorrowerSlip) => {
   return new Promise(async (resolve, reject) => {
@@ -14,7 +15,7 @@ const createBorrowerSlip = (newBorrowerSlip) => {
       if (checkBlockedUser !== null) {
         return resolve({
           status: "ERR",
-          message: "User is blocked. Please check your borrower slip",
+          message: "Bạn đọc phạm quy, kiểm tra lại phiếu mượn",
         });
       }
       /**: check số lượng sách đang mượn và số sách hiện tại có vượt quá không */
@@ -147,20 +148,83 @@ const getDetailOffSlip = (id) => {
 const getAll = () => {
   return new Promise(async (resolve, reject) => {
     try {
-      const allBSlip = await OffBorrowerSlip.find().sort({
-        createdAt: -1,
-        updatedAt: -1,
+      const allBSlip = await OffBorrowerSlip.aggregate([
+        {
+          $addFields: {
+            statusOrder: {
+              $switch: {
+                branches: [
+                  { case: { $eq: ["$state", 3] }, then: 1 },
+                  { case: { $eq: ["$state", 1] }, then: 2 },
+                  { case: { $eq: ["$state", 2] }, then: 3 },
+                ],
+                default: 4, // Any other states, if needed
+              },
+            },
+          },
+        },
+        {
+          $sort: {
+            statusOrder: 1, // Sắp xếp theo statusOrder (3 -> 1 -> 2)
+            createdAt: -1,
+          },
+        },
+      ]);
+
+      if (!allBSlip) {
+        return resolve({
+          status: "ERR",
+          message: "No borrower slips found",
+        });
+      }
+
+      const statusStats = await OffBorrowerSlip.aggregate([
+        {
+          $group: {
+            _id: "$state",
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+      const stat = [
+        { name: 'chờ xác nhận', value: 0 },
+        { name: 'đang mượn', value: 0 },
+        { name: 'đã trả', value: 0 },
+        { name: 'quá hạn', value: 0 },
+      ];
+
+      statusStats.forEach((statItem) => {
+        switch (statItem._id) {
+          case 0:
+            stat[0].value = statItem.count;
+            break;
+          case 1:
+            stat[1].value = statItem.count;
+            break;
+          case 2:
+            stat[2].value = statItem.count;
+            break;
+          case 3:
+            stat[3].value = statItem.count;
+            break;
+          default:
+            break;
+        }
       });
-      return resolve({
+
+      resolve({
         status: "OK",
         message: "Success",
         data: allBSlip,
+        stat: stat,
       });
     } catch (e) {
       reject(e);
     }
   });
 };
+
 
 const deleteMany = (ids) => {
   return new Promise(async (resolve, reject) => {
@@ -200,7 +264,7 @@ const deleteOffSlip = (id) => {
   });
 };
 
-const updateState = (id, newState) => {
+const updateState = (id, newState, lateFee, paidLateFee) => {
   return new Promise(async (resolve, reject) => {
     try {
       const bSlip = await OffBorrowerSlip.findById(id);
@@ -215,7 +279,7 @@ const updateState = (id, newState) => {
 
       const validTransitions = {
         1: [2, 3], // BORROWING (1) -> RETURNED (2) hoặc OVERDUE (3)
-        2: [], // RETURNED (2) 
+        2: [2], // RETURNED (2) 
         3: [2], // OVERDUE (3) -> RETURNED (2)
       };
 
@@ -237,27 +301,37 @@ const updateState = (id, newState) => {
           await blockPhone.save()
         }
       } else if (newState === 2) {
-        if (currentState === 3) {
-          const p = await BlockedPhone.findOne({ phoneNumber: bSlip.phoneNumber })
-          const user = await User.findOne({ phoneNumber: bSlip.phoneNumber })
-          if (user) {
-            const onBrSlip = await OnBorrowerSlip.find({
-              userId: user._id,
-              $or: [
-                { state: 3 },
-                { lateFee: { $gt: 0 } }
-              ]
-            });
-
-            if (p && (onBrSlip.length === 0)) {
-              await BlockedPhone.findOneAndDelete({
-                phoneNumber: bSlip.phoneNumber
-              },
-                {
-                  new: true
-                })
-            }
+        const check = await ViolationCheck.check(bSlip.phoneNumber)
+        if (currentState === 2) {
+          if (check.lateOffBrSlip === 0 && check.lateBrSlip === 0 && paidLateFee === true) {
+            await BlockedPhone.findOneAndDelete({
+              phoneNumber: bSlip.phoneNumber
+            },
+              {
+                new: true
+              })
           }
+          bSlip.lateFee = lateFee
+          bSlip.paidLateFee = paidLateFee
+          await bSlip.save()
+          return resolve({
+            status: "OK",
+            message: "update complete",
+            data: bSlip,
+          })
+        }
+        if (currentState === 3) {
+          if (check.lateOffBrSlip === 1 && check.lateBrSlip === 0 && paidLateFee === true) {
+            await BlockedPhone.findOneAndDelete({
+              phoneNumber: bSlip.phoneNumber
+            },
+              {
+                new: true
+              })
+          }
+
+          bSlip.lateFee = lateFee
+          bSlip.paidLateFee = paidLateFee
         }
         const promises = listBook.map(async (book) => {
           const bookData = await Book.findOneAndUpdate(
@@ -314,10 +388,13 @@ const callSlipStatistic = (year) => {
     try {
       // Tạo mảng để lưu tổng số phiếu theo tháng
       const monthlySlipStats = [];
+      const monthlyPenalty = [];
 
       // Tạo biến tổng số phiếu và tổng số sách được mượn
       let totalBorrowerSlip = 0;
       let totalBorrowedBook = 0;
+      let totalLateFee = 0;
+      let totalPaidLateFee = 0;
 
       for (let month = 1; month <= 12; month++) {
         // Xử lý điều kiện date trước khi thống kê từng tháng
@@ -350,9 +427,27 @@ const callSlipStatistic = (year) => {
           }
         ]);
 
+        const penaltyStats = await OffBorrowerSlip.aggregate([
+          {
+            $match: {
+              updatedAt: { $gte: dateCondition[0], $lte: dateCondition[1] },
+              state: 2,
+              lateFee: { $exists: true, $gt: 0 },
+              paidLateFee: { $exists: true }
+            }
+          },
+          {
+            $group: {
+              _id: '$paidLateFee',
+              totalLateFee: { $sum: '$lateFee' }
+            }
+          }
+        ]);
+
         const monthNames = ["January", "February", "March", "April", "May", "June",
           "July", "August", "September", "October", "November", "December"];
         const monthName = monthNames[month - 1];
+        let paidLateFee = 0, unpaidLateFee = 0;
 
         let borrowing = 0, returned = 0, overdue = 0, monthlyBooks = 0;
 
@@ -361,6 +456,16 @@ const callSlipStatistic = (year) => {
           if (stat._id === 2) returned = stat.count;
           if (stat._id === 3) overdue = stat.count;
           monthlyBooks += stat.totalBooks;
+        });
+
+        penaltyStats.forEach(stat => {
+          if (stat._id) {
+            paidLateFee = stat.totalLateFee;
+            totalPaidLateFee += stat.totalLateFee;
+          } else {
+            unpaidLateFee = stat.totalLateFee;
+          }
+          totalLateFee += stat.totalLateFee;
         });
 
         totalBorrowerSlip += (borrowing + returned + overdue);
@@ -372,15 +477,26 @@ const callSlipStatistic = (year) => {
           returned: returned,
           overdue: overdue
         });
+
+        monthlyPenalty.push({
+          month: monthName,
+          paidLateFee: paidLateFee,
+          unpaidLateFee: unpaidLateFee
+        });
       }
 
       resolve({
         status: "OK",
         message: "complete statistic",
-        data: {
+        data1: {
           totalBorrowerSlip: totalBorrowerSlip,
           totalBorrowedBook: totalBorrowedBook,
           monthlySlipStats: monthlySlipStats
+        },
+        data2: {
+          totalLateFee: totalLateFee,
+          totalPaidLateFee: totalPaidLateFee,
+          monthlyPenalty: monthlyPenalty
         }
       });
 

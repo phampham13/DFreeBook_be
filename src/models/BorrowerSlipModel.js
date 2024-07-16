@@ -1,3 +1,4 @@
+const { boolean } = require('joi');
 const mongoose = require('mongoose')
 const Schema = mongoose.Schema;
 
@@ -21,7 +22,8 @@ const borrowerSlipSchema = new mongoose.Schema(
         returnDate: { type: Date },
         dueDate: { type: Date },
         totalAmount: { type: Number, required: true },
-        lateFee: { type: Number }
+        lateFee: { type: Number },
+        paidLateFee: { type: Boolean }
         //borrowedDays: {type: Number}
     },
     {

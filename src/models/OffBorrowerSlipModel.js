@@ -14,8 +14,10 @@ const offBorrowerSlipSchema = new mongoose.Schema(
         phoneNumber: { type: String, required: true, required: true },
         books: [BookSchema],
         totalAmount: { type: Number, required: true },
-        returnDate: {type: Date},
-        dueDate: {type: Date}
+        returnDate: { type: Date },
+        dueDate: { type: Date },
+        lateFee: { type: Number },
+        paidLateFee: { type: Boolean }
     },
     {
         timestamps: true,
